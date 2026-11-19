@@ -1,0 +1,44 @@
+CARTELLINO - LICENZA D'USO PROPRIETARIA
+=======================================
+
+Copyright (c) 2026 Associazione "Digital Valut"
+C.F. 90036980846 - Piazza Palermo 4, 92024 Canicatti' (AG)
+Tutti i diritti riservati.
+
+1. TITOLARITA'
+   Il software "Cartellino" (codice sorgente, app per telefono, pagina web,
+   Area azienda, grafica, testi, documentazione e marchi) e' di proprieta'
+   esclusiva dell'Associazione "Digital Valut" (di seguito "il Titolare") ed e'
+   protetto dalla legge sul diritto d'autore (L. 22 aprile 1941, n. 633) e
+   dalle norme sulla proprieta' intellettuale.
+
+2. USO CONSENTITO
+   L'uso e' consentito solo alle aziende che hanno sottoscritto con il Titolare
+   un contratto di licenza in corso di validita', e ai loro dipendenti, al solo
+   fine di registrare presenze e assenze di quell'azienda, alle condizioni di
+   quel contratto. In mancanza di licenza attiva il software si blocca.
+
+3. DIVIETI
+   Senza autorizzazione scritta del Titolare e' vietato: copiare, riprodurre,
+   modificare, tradurre, adattare, decompilare o disassemblare il software
+   (salvo i casi espressamente consentiti dalla legge); distribuirlo, venderlo,
+   noleggiarlo, darlo in uso o in sublicenza a terzi; rimuovere, aggirare o
+   disattivare i controlli di licenza; rimuovere avvisi di copyright, logo e
+   marchi del Titolare.
+
+4. DATI PERSONALI
+   Il Titolare fornisce uno strumento: i dati delle presenze sono trattati
+   dall'azienda cliente (datore di lavoro) e viaggiano dal telefono all'azienda
+   in un file cifrato che il Titolare non riceve e non puo' leggere.
+
+5. COMPONENTI DI TERZI
+   Il software contiene componenti open source (per esempio con licenza MIT)
+   che restano soggetti alle rispettive licenze; i testi delle licenze si
+   trovano nei pacchetti dei componenti e, per il generatore di QR, in
+   admin/qrcode.js.
+
+6. NESSUNA GARANZIA OLTRE IL CONTRATTO
+   Garanzie, assistenza e responsabilita' sono regolate solo dal contratto di
+   licenza con l'azienda cliente.
+
+Per informazioni e licenze: Associazione "Digital Valut", sede legale sopra.
