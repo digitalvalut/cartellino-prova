@@ -3735,7 +3735,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611191835"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611191837"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -5063,6 +5063,9 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     if (state.contents.length) await recompute();
   };
   window.__cartellinoStaff = { renderStaff }; // usato dai test automatici
+
+  // Area azienda aperta dal sito: copia per usarla anche senza internet (aperta da file: non serve)
+  if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(() => undefined);
 
   show();
   checkLicense();
