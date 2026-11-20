@@ -10,12 +10,31 @@
     --brand: #0f172a; --ok: #15803d; --okbg: #dcfce7; --bad: #b91c1c; --badbg: #fee2e2; --warn: #92400e; --warnbg: #fef3c7;
   }
   * { box-sizing: border-box; }
+  /* stile comune: ombre leggere, angoli morbidi, campi tutti uguali */
+  .card { box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.05); }
+  input[type=email], input[type=number], input[type=date], input[type=time], input:not([type]) {
+    font: inherit; font-size: 16px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 12px; color: var(--ink); background: #fff; }
+  input[type=email]:focus, input[type=number]:focus, input[type=date]:focus, input[type=time]:focus, input:not([type]):focus { outline: none; border-color: var(--brand); }
+  button { transition: transform .08s ease, box-shadow .15s ease; }
+  button:not(:disabled):hover { box-shadow: 0 4px 14px rgba(15,23,42,.10); }
+  button:not(:disabled):active { transform: translateY(1px); }
+  tbody tr:hover td { background: #f8fafc; }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸ "; }
+  details[open] > summary::before { content: "▾ "; }
+  .step { display: flex; align-items: center; gap: 10px; margin: 18px 0 4px; font-weight: 800; font-size: 17px; }
+  .step b { display: inline-flex; width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: #fff; align-items: center; justify-content: center; font-size: 15px; }
+  #startCard ol { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+  #startCard li { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  #startCard li.done { background: #f0fdf4; border-color: #bbf7d0; color: var(--ok); }
+  #startCard li .t { flex: 1; font-weight: 600; }
   body { margin: 0; font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); background: var(--bg); }
   header { background: var(--brand); color: #fff; padding: 18px 24px; }
   header h1 { margin: 0; font-size: 22px; }
   header p { margin: 4px 0 0; color: #cbd5e1; font-size: 14px; }
   main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin-bottom: 16px; }
   .card h2 { margin: 0 0 6px; font-size: 20px; }
   .muted { color: var(--ink2); font-size: 15px; margin: 0 0 14px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
@@ -109,7 +128,7 @@
   body[data-view="oggi"] #staffCard { display: block !important; }
   body[data-view] #folderCard { display: none !important; }
   body[data-view="report"] #folderCard { display: block !important; }
-  body[data-view]:not([data-view="oggi"]) #folderWarn { display: none !important; }
+  body[data-view]:not([data-view="oggi"]) #folderWarn, body[data-view]:not([data-view="oggi"]) #startCard { display: none !important; }
   body[data-view="qr"] #sheetCard, body[data-view="qr"] #places, body[data-view="qr"] #resetBox, body[data-view="qr"] #rulesCard, body[data-view="qr"] #sosCard { display: block !important; }
   body[data-view] #sosCard { display: none !important; }
   body[data-view="qr"] #sosCard { display: block !important; }
@@ -171,16 +190,18 @@
   <section class="card hidden" id="setup">
     <h2>Benvenuto! Prepariamo la tua azienda</h2>
     <p class="muted">Si fa una volta sola. Se l'hai già fatto su un altro computer, scrivi gli stessi dati e la stessa password.</p>
+    <div class="step"><b>1</b> La tua ditta</div>
     <label class="field" for="setupName">Nome dell'azienda</label>
     <input type="text" id="setupName" placeholder="Es. Rossi Costruzioni S.r.l." maxlength="80">
     <label class="field" for="setupCode">Codice cliente (te lo dà DigitalValut)</label>
     <input type="text" id="setupCode" placeholder="Es. ROSSI2026" maxlength="20" style="text-transform:uppercase">
+    <div class="step"><b>2</b> La tua password (la sai solo tu)</div>
     <label class="field" for="setupPwd">Scegli una password (almeno 8 caratteri)</label>
     <input type="password" id="setupPwd" autocomplete="new-password">
     <label class="field" for="setupPwd2">Riscrivi la password</label>
     <input type="password" id="setupPwd2" autocomplete="new-password">
     <p class="note" style="margin-top:8px">⚠️ <b>Scrivi la password su un foglio e conservalo.</b> Serve ogni mese per aprire i report. Se la perdi, nessuno può recuperarla.</p>
-    <label class="field">Colore dell'app per i tuoi dipendenti</label>
+    <div class="step"><b>3</b> Il colore dell'app dei tuoi dipendenti</div>
     <div class="swatches" id="swatches"></div>
     <p id="setupError" class="bad" style="min-height:1.4em"></p>
     <button class="primary" id="setupBtn">Prepara tutto</button>
@@ -297,6 +318,12 @@
       <p id="placeError" class="bad" style="min-height:1.2em"></p>
       <div class="tablewrap"><table id="tPlaces"></table></div>
     </div>
+  </section>
+
+  <section class="card hidden noprint" id="startCard">
+    <h2>🚀 Primi passi</h2>
+    <p class="muted" style="margin:0">Quattro cose da fare una volta sola. Si spuntano da sole.</p>
+    <ol id="startList"></ol>
   </section>
 
   <div class="card hidden noprint" id="folderWarn" style="border:2px solid #f59e0b;background:#fffbeb">
@@ -3890,7 +3917,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611201000"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611201009"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -4073,7 +4100,7 @@ var qrcode = function() {
     }
   };
 
-  $("printBtn").onclick = () => window.print();
+  $("printBtn").onclick = () => { if (state.company) { state.company.cartelloStampato = new Date().toISOString(); save(state.company); renderStart(); } window.print(); };
   $("resetLink").onclick = (e) => {
     e.preventDefault();
     if (!confirm("Vuoi togliere l'azienda da questo computer? Potrai rimetterla con gli stessi dati e la stessa password.")) return;
@@ -5048,6 +5075,34 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     alert(`Il file ${f.name} è nella cartella Download.\nSi apre l'email per il consulente: allega il file e premi Invia.`);
   };
 
+  // ---------------------------------------------------------- PRIMI PASSI (onboarding): si spuntano da soli
+  function startItems() {
+    const c = state.company || {};
+    const anyStaff = Object.values(people()).some((v) => v && v.invito && !v.eliminato);
+    return [
+      { id: "folder", done: !!(FOLDER && FOLDER.ok), t: "📁 Collega la cartella dei dati (mai più dati persi)", b: "Collega" },
+      { id: "sos", done: !!c.recupero, t: "🆘 Stampa il foglio di emergenza (password persa)", b: "Vai" },
+      { id: "sheet", done: !!c.cartelloStampato, t: "🖨️ Stampa il cartello \"TIMBRA QUI\" e appendilo", b: "Vai" },
+      { id: "staff", done: anyStaff, t: "👷 Crea il primo dipendente e mandagli l'invito", b: "Vai" },
+    ];
+  }
+  function startDone() { return startItems().every((x) => x.done); }
+  function renderStart() {
+    if (!$("startCard") || !state.company) return;
+    const items = startItems();
+    $("startCard").classList.toggle("hidden", !state.key || items.every((x) => x.done));
+    $("startList").innerHTML = items.map((x) => `<li class="${x.done ? "done" : ""}" data-start="${x.id}"><span>${x.done ? "✅" : "⬜"}</span><span class="t">${esc(x.t)}</span>${x.done ? "" : `<button class="btn-small primary" data-startgo="${x.id}">${esc(x.b)}</button>`}</li>`).join("");
+  }
+  $("startList").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-startgo]");
+    if (!b) return;
+    const id = b.dataset.startgo;
+    if (id === "folder") return $("folderWarnBtn").onclick();
+    if (id === "sos") { setView("qr"); $("sosCard").scrollIntoView({ behavior: "smooth" }); return; }
+    if (id === "sheet") { setView("qr"); return; }
+    if (id === "staff") { $("staffCard").scrollIntoView({ behavior: "smooth" }); $("newNome").focus(); }
+  });
+
   // ---------------------------------------------------------- PASSWORD: originale, nuova (dopo il recupero), foglio di emergenza
   /** Apre la chiave dell'azienda con la password: quella iniziale (calcolata) oppure quella nuova scelta dopo il recupero. */
   async function openWithPassword(company, pwd) {
@@ -5061,6 +5116,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     return null;
   }
   function renderSos() {
+    renderStart();
     const r = state.company && state.company.recupero;
     $("sosState").innerHTML = r && r.at
       ? `<span class="ok">✅ Foglio creato il ${esc(new Date(r.at).toLocaleDateString("it-IT"))}.</span> <span class="note">Se lo perdi, creane uno nuovo: quello vecchio non vale più.</span>`
@@ -5261,7 +5317,8 @@ Digital Valut non ne ha una copia.</p>
     if (!el || !state.company) return;
     $("folderCard").classList.remove("hidden");
     $("folderReconnect").classList.toggle("hidden", !FOLDER.needPermission);
-    const showWarn = !!state.key && !FOLDER.ok;
+    const showWarn = !!state.key && !FOLDER.ok && startDone();
+    renderStart();
     $("folderWarn").classList.toggle("hidden", !showWarn);
     if (!canFolder) el.innerHTML = `<span class="bad">Per la cartella dei dati apri Cartellino con <b>Microsoft Edge</b> o <b>Google Chrome</b>.</span>`;
     else if (FOLDER.error) el.innerHTML = `<span class="bad">${esc(FOLDER.error)}</span>`;
@@ -5338,6 +5395,7 @@ Digital Valut non ne ha una copia.</p>
         (v.senzaTelefono ? "" : `<button class="btn-small" data-staff="resend" data-cf="${esc(cf)}">📨 Rimanda invito</button> `) + `<button class="btn-small" data-staff="delete" data-cf="${esc(cf)}">🗑 Elimina</button>`,
       ] })),
       "Nessun dipendente: crea il primo qui sopra.");
+    renderStart();
     const sel = $("manCf"), cur = sel.value;
     sel.innerHTML = rows.filter(([, v]) => !v.uscito).map(([cf, v]) => `<option value="${esc(cf)}">${esc(v.invito.cognome)} ${esc(v.invito.nome)}</option>`).join("");
     if (cur) sel.value = cur;
