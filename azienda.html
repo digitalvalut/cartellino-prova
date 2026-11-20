@@ -272,12 +272,14 @@
         <div><label class="field" for="placeType">Tipo</label>
           <select id="placeType"><option value="luogo">📍 Luogo (ufficio, cantiere)</option><option value="mezzo">🚚 Mezzo (camion, autobus, furgone)</option></select></div>
         <div><label class="field" for="placeName">Nome</label><input type="text" id="placeName" placeholder="Es. Cantiere Via Roma" maxlength="60" style="max-width:240px"></div>
-        <div><label class="field" for="placeCoords">Coordinate (facoltative, da Google Maps)</label><input type="text" id="placeCoords" placeholder="41.902800, 12.496400" style="max-width:220px"></div>
+        <div><label class="field" for="placeCoords">Posizione (facoltativa)</label><input type="text" id="placeCoords" placeholder="41.902800, 12.496400" style="max-width:200px">
+          <button class="btn-small" id="placeMapBtn" type="button">🗺️ Scegli sulla mappa</button></div>
         <div><label class="field" for="placeRadius">Raggio</label>
           <select id="placeRadius"><option value="100">100 m</option><option value="200" selected>200 m</option><option value="500">500 m</option><option value="1000">1 km</option></select></div>
         <button class="primary" id="placeAdd">Aggiungi luogo</button>
       </div>
-      <p class="note">Coordinate: apri Google Maps, fai clic con il tasto destro sul punto esatto, clicca sui numeri che compaiono (si copiano) e incollali qui.</p>
+      <p class="note">Posizione: premi <b>🗺️ Scegli sulla mappa</b>, cerca l'indirizzo e tocca l'ingresso. Senza posizione il cartello è un "QR libero".
+        Dopo la stampa, con il <b>QR di prova</b> controlli sul posto che la zona sia giusta.</p>
       <p id="placeError" class="bad" style="min-height:1.2em"></p>
       <div class="tablewrap"><table id="tPlaces"></table></div>
     </div>
@@ -361,6 +363,20 @@
       <p class="note">"Cambia mansione" e "Non lavora più qui" preparano un messaggio firmato da mandare al telefono del dipendente.</p></div>
   </section>
 
+  <div id="mapBox" class="hidden noprint" role="dialog" aria-modal="true" style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;display:flex;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:16px;padding:14px;width:min(860px,96vw)">
+      <div class="row" style="align-items:center">
+        <input id="mapSearch" placeholder="Cerca l'indirizzo (es. Via Roma 10, Canicattì)" style="flex:1;min-width:200px">
+        <button class="btn-small" id="mapSearchBtn">🔍 Cerca</button>
+      </div>
+      <p class="note" id="mapInfo">Tocca il punto esatto dell'ingresso del cantiere: il cerchio è la zona valida.</p>
+      <div id="mapCanvas" style="height:min(60vh,460px);border-radius:12px;background:#e2e8f0"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
+        <button id="mapCancel">Annulla</button><button class="primary" id="mapOk" disabled>✓ Usa questo punto</button>
+      </div>
+    </div>
+  </div>
+
   <section id="placeSheet" class="card hidden" style="text-align:center">
     <p class="company" id="placeSheetCompany" style="font-size:22px;font-weight:800;margin:0"></p>
     <p style="font-size:34px;font-weight:800;margin:8px 0">📍 <span id="placeSheetName"></span></p>
@@ -369,6 +385,12 @@
     <p class="note" id="placeSheetGps"></p>
     <p class="reportto hidden" id="placeSheetReportTo"></p>
     <p class="link noprint"><a id="placeSheetLink" target="_blank" rel="noopener"></a></p>
+    <div class="noprint hidden" id="placeTestBox" style="border:2px dashed var(--line);border-radius:14px;padding:12px;margin:12px auto;max-width:520px">
+      <p style="margin:0 0 6px"><b>🔎 QR di PROVA (non stamparlo)</b>: inquadralo <b>sul posto</b> con il telefono (anche senza Cartellino attivo):
+        ti dice se la zona è giusta. Non è una timbratura.</p>
+      <div id="placeTestQr" style="display:inline-block;width:160px;height:160px"></div>
+      <p class="link"><a id="placeTestLink" target="_blank" rel="noopener"></a></p>
+    </div>
     <div class="row noprint" style="justify-content:center">
       <button class="primary" id="placeSheetPrint">🖨️ Stampa</button><button id="placeSheetClose">Chiudi</button>
     </div>
@@ -3538,6 +3560,23 @@ var qrcode = function() {
     return `${base}invito?m=${signed.m}&f=${signed.f}`;
   }
 
+  /**
+   * QR di PROVA di un luogo (non timbra): il datore o il capocantiere lo inquadra SUL POSTO e il telefono dice
+   * se è dentro la zona giusta. Firmato come gli altri (contiene la chiave pubblica: non serve l'app attivata).
+   */
+  async function createPlaceTest(companyKey, { tenantId, place }) {
+    if (place.tipo === "mezzo" || place.lat == null || place.lng == null) throw new Error("Solo i luoghi con la posizione si possono provare.");
+    return signCompanyData(companyKey, { v: 1, t: tenantId, k: "provaluogo", id: place.id, nome: place.nome, lat: place.lat, lng: place.lng, r: place.r, chiave: companyKey.publicKeyHex });
+  }
+  function placeTestLink(appUrl, signed) {
+    const base = String(appUrl).replace(/\/?$/, "/");
+    return `${base}provaluogo?m=${signed.m}&f=${signed.f}`;
+  }
+  /** Il punto è in Italia? (per avvisare il datore di un errore nelle coordinate) */
+  function inItaly(lat, lng) {
+    return lat >= 35.2 && lat <= 47.2 && lng >= 6.5 && lng <= 18.7;
+  }
+
   function placeLink(appUrl, place) {
     const base = String(appUrl).replace(/\/?$/, "/");
     return `${base}timbra?m=${place.m}&f=${place.f}`;
@@ -3699,6 +3738,9 @@ var qrcode = function() {
     openVault,
     vaultHeader,
     inviteLink,
+    createPlaceTest,
+    placeTestLink,
+    inItaly,
     pointMul,
     G,
     parseReportFile,
@@ -3735,7 +3777,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611191837"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611200914"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -4466,9 +4508,11 @@ var qrcode = function() {
   });
 
   // ---------------------------------------------------------- foglio per i dipendenti = QR della Sede
+  /** Il controllo posizione vale per QUESTO cartello? (dichiarazione fatta + punto sulla mappa + non spento per questo luogo) */
+  function placeGps(p) { return !!state.company.gps && p.tipo !== "mezzo" && p.lat != null && p.gps !== false; }
   async function signedPlaceLink(p) {
     const signed = await L.createPlace(state.key, { tenantId: state.company.code, id: p.id, nome: p.nome, lat: p.lat, lng: p.lng, r: p.r,
-      gps: !!state.company.gps && p.lat != null, tipo: p.tipo, azienda: state.company });
+      gps: placeGps(p), tipo: p.tipo, azienda: state.company });
     return L.placeLink(state.company.appUrl || appUrl, signed);
   }
   /** La prima volta crea da sola la "Sede" (QR senza coordinate): così il datore ha subito il suo QR. */
@@ -4482,8 +4526,8 @@ var qrcode = function() {
     }
     let changed = false;
     for (const p of list) {
-      if (!p.link || p.gpsAt !== String(!!state.company.gps) || (p.invAt || "false") !== String(!!state.company.soloInvitati)) {
-        p.link = await signedPlaceLink(p); p.gpsAt = String(!!state.company.gps); p.invAt = String(!!state.company.soloInvitati); changed = true;
+      if (!p.link || p.gpsAt !== String(placeGps(p)) || (p.invAt || "false") !== String(!!state.company.soloInvitati)) {
+        p.link = await signedPlaceLink(p); p.gpsAt = String(placeGps(p)); p.invAt = String(!!state.company.soloInvitati); changed = true;
       }
     }
     if (changed || !loadPlaces().length) savePlaces(list);
@@ -4523,8 +4567,11 @@ var qrcode = function() {
       : `<span class="pill ok">GPS spento</span> si registra solo il luogo del QR.`;
     const list = loadPlaces();
     table($("tPlaces"),
-      [{ t: "Luogo" }, { t: "Coordinate" }, { t: "Raggio", num: 1 }, { t: "" }],
+      [{ t: "Luogo" }, { t: "Coordinate" }, { t: "Raggio", num: 1 }, { t: "Controllo" }, { t: "" }],
       list.map((p) => ({ cells: [`${p.tipo === "mezzo" ? "🚚" : "📍"} <b>${esc(p.nome)}</b>`, p.tipo === "mezzo" ? "mezzo in movimento" : p.lat == null ? "senza posizione (solo QR)" : `${p.lat}, ${p.lng}`, p.tipo === "mezzo" || p.lat == null ? "—" : `${p.r} m`,
+        p.tipo === "mezzo" || p.lat == null ? `<span class="note">QR libero</span>`
+          : !state.company.gps ? `<span class="note">QR libero (GPS spento)</span>`
+          : `<button class="btn-small" data-place="gps" data-pid="${esc(p.id)}">${placeGps(p) ? "📍 QR + GPS" : "QR libero"}</button>`,
         `<button class="primary btn-small" data-place="print" data-pid="${esc(p.id)}">🖨️ Stampa QR</button> <button class="btn-small" data-place="del" data-pid="${esc(p.id)}">Elimina</button>`] })),
       "Nessun luogo: aggiungi l'ufficio o il primo cantiere.");
   }
@@ -4559,8 +4606,8 @@ var qrcode = function() {
     const err = (x) => { $("placeError").textContent = x; };
     if (nome.length < 2) return err("Scrivi il nome del luogo.");
     const noCoords = !mezzo && !$("placeCoords").value.trim();
-    if (noCoords && state.company.gps) return err("Con il GPS acceso servono le coordinate del luogo (da Google Maps).");
-    if (!coords && !noCoords) return err("Coordinate non valide: incollale da Google Maps (es. 41.902800, 12.496400).");
+    if (!coords && !noCoords) return err("Coordinate non valide: scegli il punto sulla mappa (o incollale da Google Maps).");
+    if (!mezzo && !noCoords && !L.inItaly(coords.lat, coords.lng) && !confirm("Il punto è FUORI dall'Italia: sicuro che sia giusto?")) return err("Controlla il punto sulla mappa.");
     const list = loadPlaces();
     if (list.some((p) => p.nome.toLowerCase() === nome.toLowerCase())) return err("C'è già un luogo con questo nome.");
     err("");
@@ -4574,6 +4621,71 @@ var qrcode = function() {
     ensureSede().then(renderSheet);
   };
 
+  // ---------------------------------------------------------- MAPPA per scegliere il punto (niente numeri a mano)
+  const MAP = { map: null, marker: null, circle: null, point: null };
+  function loadLeaflet() {
+    if (window.L && window.L.map && window.L !== L) return Promise.resolve(window.L);
+    return new Promise((resolve, reject) => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(css);
+      const js = document.createElement("script");
+      js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      js.onload = () => resolve(window.L);
+      js.onerror = () => reject(new Error("Serve internet per la mappa."));
+      document.head.appendChild(js);
+    });
+  }
+  function mapRadius() { return Number($("placeRadius").value) || 200; }
+  function mapSetPoint(lat, lng) {
+    const Lf = MAP.lib;
+    MAP.point = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+    if (!MAP.marker) MAP.marker = Lf.marker([lat, lng]).addTo(MAP.map);
+    else MAP.marker.setLatLng([lat, lng]);
+    if (!MAP.circle) MAP.circle = Lf.circle([lat, lng], { radius: mapRadius(), color: "#16a34a" }).addTo(MAP.map);
+    else MAP.circle.setLatLng([lat, lng]).setRadius(mapRadius());
+    $("mapOk").disabled = false;
+    $("mapInfo").textContent = `Punto: ${MAP.point.lat}, ${MAP.point.lng} · zona di ${mapRadius()} m` + (L.inItaly(lat, lng) ? "" : " · ⚠️ FUORI dall'Italia");
+  }
+  $("placeMapBtn").onclick = async () => {
+    $("mapBox").classList.remove("hidden");
+    try {
+      MAP.lib = await loadLeaflet();
+      if (!MAP.map) {
+        MAP.map = MAP.lib.map("mapCanvas").setView([41.9, 12.5], 6);
+        MAP.lib.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(MAP.map);
+        MAP.map.on("click", (e) => mapSetPoint(e.latlng.lat, e.latlng.lng));
+      }
+      setTimeout(() => MAP.map.invalidateSize(), 50);
+      const cur = L.parseCoordinates($("placeCoords").value);
+      if (cur) { mapSetPoint(cur.lat, cur.lng); MAP.map.setView([cur.lat, cur.lng], 17); }
+    } catch (e) {
+      $("mapInfo").innerHTML = `<span class="bad">${esc(e.message)} In alternativa: in Google Maps tasto destro sul punto, clic sui numeri e incollali qui.</span>`;
+    }
+  };
+  $("mapSearchBtn").onclick = async () => {
+    const q = $("mapSearch").value.trim();
+    if (!q || !MAP.map) return;
+    try {
+      const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=it&q=" + encodeURIComponent(q));
+      const j = await r.json();
+      if (!j.length) { $("mapInfo").textContent = "Indirizzo non trovato: prova a scriverlo diversamente o sposta la mappa a mano."; return; }
+      const lat = Number(j[0].lat), lng = Number(j[0].lon);
+      MAP.map.setView([lat, lng], 18);
+      mapSetPoint(lat, lng);
+      $("mapInfo").textContent += " — controlla e tocca l'ingresso esatto.";
+    } catch { $("mapInfo").textContent = "Ricerca non riuscita (serve internet)."; }
+  };
+  $("mapSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") $("mapSearchBtn").click(); });
+  $("mapCancel").onclick = () => $("mapBox").classList.add("hidden");
+  $("mapOk").onclick = () => {
+    if (!MAP.point) return;
+    $("placeCoords").value = `${MAP.point.lat}, ${MAP.point.lng}`;
+    $("mapBox").classList.add("hidden");
+  };
+  $("placeRadius").addEventListener("change", () => { if (MAP.circle) { MAP.circle.setRadius(mapRadius()); if (MAP.point) mapSetPoint(MAP.point.lat, MAP.point.lng); } });
+
   async function printPlace(p) {
     const link = await signedPlaceLink(p);
     const qr = qrcode(0, "M");
@@ -4583,9 +4695,19 @@ var qrcode = function() {
     $("placeSheetCompany").textContent = state.company.name;
     $("placeSheetGps").textContent = p.tipo === "mezzo"
       ? "QR del mezzo: chi timbra qui risulta su questo mezzo. Nessuna posizione viene letta."
-      : state.company.gps
+      : placeGps(p)
       ? "Al momento della timbratura il telefono controlla se sei sul posto (salva solo sì/no, mai dove ti trovi)."
       : "";
+    $("placeTestBox").classList.toggle("hidden", p.tipo === "mezzo" || p.lat == null);
+    if (p.tipo !== "mezzo" && p.lat != null) {
+      const tl = L.placeTestLink(state.company.appUrl || appUrl, await L.createPlaceTest(state.key, { tenantId: state.company.code, place: p }));
+      const tq = qrcode(0, "M");
+      tq.addData(tl);
+      tq.make();
+      $("placeTestQr").innerHTML = tq.createSvgTag({ cellSize: 3, margin: 2, scalable: true });
+      $("placeTestLink").textContent = "Link di prova";
+      $("placeTestLink").href = tl;
+    }
     $("placeSheetQr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
     $("placeSheetLink").textContent = link;
     $("placeSheetLink").href = link;
@@ -4605,6 +4727,12 @@ var qrcode = function() {
       if (b.dataset.place === "print") {
         if (!state.key) { showError("Scrivi prima la tua password."); return; }
         await printPlace(p);
+      } else if (b.dataset.place === "gps") {
+        p.gps = p.gps === false;
+        savePlaces(list);
+        await ensureSede();
+        renderSheet();
+        $("placeError").innerHTML = `<span class="warn">Cartello "${esc(p.nome)}": ${placeGps(p) ? "QR + controllo posizione" : "QR libero"}. <b>Ristampalo</b> e sostituisci quello appeso.</span>`;
       } else if (b.dataset.place === "del") {
         if (!confirm(`Eliminare il luogo "${p.nome}"? Il suo QR non sarà più riconosciuto come luogo dell'azienda.`)) return;
         savePlaces(list.filter((x) => x.id !== p.id));
