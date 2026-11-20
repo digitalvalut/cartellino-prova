@@ -3253,6 +3253,7 @@ var qrcode = function() {
       name: ref.name || cf,
       date: ref.date,
       in: inRec ? inRec.time : "",
+      inTs: inRec ? inRec.timestamp : null,
       out: outRec ? outRec.time : "",
       minutes,
       task: (inRec || outRec).task,
@@ -3324,6 +3325,29 @@ var qrcode = function() {
     if (wd === 6 && !r.sabato) return "riposo";
     return "lavorativo";
   }
+  // Ora italiana (con ora legale/solare) di un istante, in minuti dalla mezzanotte
+  const ROME_HM = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const romeMinutes = (ms) => { const [h, m] = ROME_HM.format(new Date(ms)).split(":").map(Number); return h * 60 + m; };
+  /**
+   * Minuti notturni di un turno che inizia nell'istante startIso e dura "minutes" (minuti VERI trascorsi).
+   * Se in mezzo cambia l'ora (ultima domenica di marzo/ottobre) si conta sull'orologio italiano minuto per minuto.
+   */
+  function nightMinutesAt(startIso, minutes) {
+    const t0 = Date.parse(startIso);
+    if (!Number.isFinite(t0) || !(minutes > 0)) return 0;
+    const t1 = t0 + minutes * 60000;
+    const offset = (ms) => (((romeMinutes(ms) - (new Date(ms).getUTCHours() * 60 + new Date(ms).getUTCMinutes())) % 1440) + 1440) % 1440;
+    if (offset(t0) === offset(t1)) {
+      const h = romeMinutes(t0);
+      return nightMinutes(`${String(Math.floor(h / 60)).padStart(2, "0")}:${String(h % 60).padStart(2, "0")}`, minutes);
+    }
+    let n = 0;
+    for (let i = 0; i < minutes; i++) {
+      const m = romeMinutes(t0 + i * 60000);
+      if (m >= NIGHT_FROM || m < NIGHT_TO) n++;
+    }
+    return n;
+  }
   /** Minuti notturni (22:00-06:00) di un turno che inizia alle "HH:MM" e dura "minutes". */
   function nightMinutes(start, minutes) {
     if (!/^\d\d:\d\d$/.test(start || "") || !(minutes > 0)) return 0;
@@ -3347,7 +3371,7 @@ var qrcode = function() {
       if (!out.has(s.cf)) out.set(s.cf, { name: s.name, days: {} });
       const d = (out.get(s.cf).days[s.date] ||= { tot: 0, ord: 0, str: 0, fest: 0, nott: 0 });
       d.tot += s.minutes;
-      d.nott += nightMinutes(s.in, s.minutes);
+      d.nott += s.inTs ? nightMinutesAt(s.inTs, s.minutes) : nightMinutes(s.in, s.minutes);
     }
     for (const [cf, p] of out) {
       const ordMax = Math.round((r.orePer[cf] || r.oreGiorno) * 60);
@@ -3776,6 +3800,7 @@ var qrcode = function() {
     holidayName,
     dayKind,
     nightMinutes,
+    nightMinutesAt,
     hoursByDay,
     consultantSheets,
     buildXlsx,
@@ -3798,7 +3823,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611200925"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611200938"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
