@@ -310,6 +310,20 @@
       <label class="note">Mansione<br><input id="newMansione" list="taskList" autocomplete="off" style="width:170px"></label>
       <button class="primary big" id="newInvite">➕ Crea e invia l'invito</button>
     </div>
+    <label class="note" style="display:block;margin:6px 0"><input type="checkbox" id="newNoPhone"> <b>Senza telefono</b>: niente invito, le sue ore le scrivi tu (qui sotto).</label>
+    <details id="manualBox" style="border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0">
+      <summary style="cursor:pointer;font-weight:700">✍️ Scrivi ore a mano (dipendente senza telefono, telefono rotto…)</summary>
+      <div class="row" style="align-items:flex-end;margin-top:8px">
+        <label class="note">Dipendente<br><select id="manCf" style="min-width:180px"></select></label>
+        <label class="note">Giorno<br><input id="manDate" type="date"></label>
+        <label class="note">Entrata<br><input id="manIn" type="time" value="08:00"></label>
+        <label class="note">Uscita<br><input id="manOut" type="time" value="17:00"></label>
+        <label class="note">Motivo<br><input id="manWhy" placeholder="es. senza telefono" style="width:180px"></label>
+        <button class="primary" id="manAdd">Aggiungi</button>
+      </div>
+      <p class="note">Resta sempre segnato "✍️ scritto dal datore" (anche nel file per il consulente): non è una timbratura del dipendente.</p>
+      <p id="manError" class="bad" style="min-height:1.2em"></p>
+    </details>
     <datalist id="taskList"><option>Operaio Edile</option><option>Capocantiere</option><option>Elettricista</option><option>Termoidraulico</option><option>Impiegato Amministrativo</option><option>Operatore Sanitario</option><option>Manovale</option></datalist>
     <p id="newError" class="bad" style="min-height:1.2em"></p>
     <div class="tablewrap"><table id="tStaff"></table></div>
@@ -3272,10 +3286,16 @@ var qrcode = function() {
 
   function normalizeRules(r) {
     const o = Number(r && r.oreGiorno);
+    // ore normali al giorno per singolo dipendente (part-time): { cf: ore }
+    const orePer = {};
+    if (r && r.orePer && typeof r.orePer === "object") {
+      for (const [cf, v] of Object.entries(r.orePer)) { const n = Number(v); if (n > 0 && n <= 24) orePer[cf] = n; }
+    }
     return {
       oreGiorno: o > 0 && o <= 24 ? o : DEFAULT_RULES.oreGiorno,
       sabato: !!(r && r.sabato),
       patrono: r && /^\d\d-\d\d$/.test(r.patrono || "") ? r.patrono : "",
+      orePer,
     };
   }
   /** Domenica di Pasqua (calendario gregoriano): [mese, giorno]. */
@@ -3329,8 +3349,8 @@ var qrcode = function() {
       d.tot += s.minutes;
       d.nott += nightMinutes(s.in, s.minutes);
     }
-    const ordMax = Math.round(r.oreGiorno * 60);
-    for (const p of out.values()) {
+    for (const [cf, p] of out) {
+      const ordMax = Math.round((r.orePer[cf] || r.oreGiorno) * 60);
       for (const [date, d] of Object.entries(p.days)) {
         const kind = dayKind(date, r);
         if (kind === "festivo") d.fest = d.tot;
@@ -3633,7 +3653,7 @@ var qrcode = function() {
       ["Data", "Cognome e nome", "Codice fiscale", "Entrata", "Uscita", "Ore", "Tipo di giorno", "Luogo", "Mansione", "Note"],
       ...shifts.filter((s) => s.date.startsWith(month)).map((s) => [fmt(s.date), s.name, s.cf, s.in, s.out, s.minutes == null ? null : hoursNum(s.minutes),
         dayKind(s.date, r) === "festivo" ? holidayName(s.date, r.patrono) || "Domenica" : dayKind(s.date, r) === "riposo" ? "Sabato (riposo)" : "Lavorativo",
-        s.place || "", s.task || "", s.anomaly || ""]),
+        s.place || "", s.task || "", s.manual ? `Scritto dal datore${s.motivo ? ": " + s.motivo : ""}` : s.anomaly || ""]),
     ];
     const note = [
       ["Cartellino - presenze per il consulente del lavoro"],
@@ -3641,6 +3661,7 @@ var qrcode = function() {
       ["Mese", `${String(mo).padStart(2, "0")}/${y}`],
       ["Creato il", new Date().toLocaleDateString("it-IT")],
       ["Ore ordinarie al giorno", r.oreGiorno],
+      ...Object.entries(r.orePer).filter(([cf]) => summary.some((x) => x.cf === cf)).map(([cf, n]) => [`  di cui ${(summary.find((x) => x.cf === cf) || {}).name || cf}`, `${String(n).replace(".", ",")} ore al giorno (part-time)`]),
       ["Si lavora il sabato", r.sabato ? "sì" : "no (ore del sabato = straordinario)"],
       ["Santo patrono", r.patrono ? `${r.patrono.slice(3)}/${r.patrono.slice(0, 2)}` : "non indicato"],
       ["Come sono calcolate", "Ore in decimali (7,5 = 7 ore e 30 minuti), solo turni completi con firma digitale valida. Domeniche e festivi = ore festive. Notturne = ore tra le 22 e le 6 (già comprese nelle altre colonne)."],
@@ -3777,7 +3798,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611200914"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611200925"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -4156,11 +4177,12 @@ var qrcode = function() {
   }
 
   async function recompute() {
-    document.body.classList.toggle("hasdata", !!state.contents.length);
-    if (!state.contents.length) { $("results").classList.add("hidden"); return; }
+    const any = !!state.contents.length || manuals().length > 0;
+    document.body.classList.toggle("hasdata", any);
+    if (!any) { $("results").classList.add("hidden"); return; }
     state.data = await L.processReports(state.contents);
     filterAuthorized(state.data);
-    state.shifts = L.buildShifts(L.applyCorrections(state.data.attendances, state.data.corrections, decisions()));
+    state.shifts = buildAllShifts();
     const months = new Set();
     state.shifts.forEach((s) => months.add(s.date.slice(0, 7)));
     state.data.leaves.forEach((l) => { months.add(l.startDate.slice(0, 7)); months.add(l.endDate.slice(0, 7)); });
@@ -4324,7 +4346,7 @@ var qrcode = function() {
   }
 
   function render() {
-    state.shifts = L.buildShifts(L.applyCorrections(state.data.attendances, state.data.corrections, decisions()));
+    state.shifts = buildAllShifts();
     const m = state.month, d = state.data;
     const shifts = state.shifts.filter((s) => s.date.startsWith(m));
     const summary = L.monthlySummary(state.shifts, countedLeaves(), m, rules());
@@ -4360,7 +4382,8 @@ var qrcode = function() {
     table($("tDetail"),
       [{ t: "Data" }, { t: "Dipendente" }, { t: "Entrata" }, { t: "Uscita" }, { t: "Ore", num: 1 }, { t: "Mansione" }, { t: "Luogo" }, { t: "Note" }],
       shifts.map((s) => ({ cls: s.anomaly ? "anom" : "", cells: [fmtDate(s.date), esc(s.name), esc(s.in), esc(s.out), L.formatMinutes(s.minutes), esc(s.task), placeCell(s),
-        s.anomaly ? `<span class="pill warn">${esc(s.anomaly)}</span>` : `<span class="pill ok">firma valida</span>`] })),
+        s.manual ? `<span class="pill warn">✍️ scritto dal datore${s.motivo ? ": " + esc(s.motivo) : ""}</span> <button class="btn-small" data-delman="${esc(s.manualId)}">Togli</button>`
+          : s.anomaly ? `<span class="pill warn">${esc(s.anomaly)}</span>` : `<span class="pill ok">firma valida</span>`] })),
       "Nessun turno in questo mese.");
 
     table($("tLeaves"),
@@ -4835,7 +4858,12 @@ ${leaves.map((l) => `<tr><td>${esc(l.name)}</td><td>${esc(LEAVE_LABEL[l.type] ||
   }
   // ---------------------------------------------------------- orario di lavoro e consulente (salvati su questo computer)
   // (funzioni dichiarate: render() le può usare anche prima di arrivare qui)
-  function rules() { return L.normalizeRules(loadJson("cartellino.orario")); }
+  function rules() {
+    // ore normali al giorno della ditta + quelle dei singoli dipendenti part-time
+    const orePer = {};
+    for (const [cf, v] of Object.entries(people())) if (v && Number(v.oreGiorno) > 0) orePer[cf] = Number(v.oreGiorno);
+    return L.normalizeRules({ ...loadJson("cartellino.orario"), orePer });
+  }
   function consultantEmail() { return String(loadJson("cartellino.orario").email || "").trim(); }
   /** Assenze da contare: valide e non rifiutate. */
   function countedLeaves() { const dec = decisions(); return state.data.leaves.filter((l) => l.valid && !(dec[l.id] && dec[l.id].esito === "RIFIUTATA")); }
@@ -4953,7 +4981,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     try { const fh = await dir.getFileHandle(name); return await (await fh.getFile()).text(); } catch { return null; }
   }
   function snapshot() {
-    return { company: state.company, luoghi: loadPlaces(), decisioni: decisions(), dipendenti: people(), dainviare: outbox(), orario: loadJson("cartellino.orario") };
+    return { company: state.company, luoghi: loadPlaces(), decisioni: decisions(), dipendenti: people(), dainviare: outbox(), orario: loadJson("cartellino.orario"), manuali: manuals() };
   }
   const rawSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* il browser non salva */ } };
   /** Computer nuovo: tutto com'era nella cartella. */
@@ -4963,6 +4991,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     rawSet(PEOPLE_STORE, snap.dipendenti || {});
     rawSet(OUT_STORE, snap.dainviare || {});
     rawSet("cartellino.orario", snap.orario || {});
+    rawSet("cartellino.manuali", Array.isArray(snap.manuali) ? snap.manuali : []);
   }
   /** Stesso computer: si unisce quello che è stato fatto altrove, senza perdere niente di quello che c'è qui. */
   function mergeSnapshot(snap) {
@@ -4988,6 +5017,9 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     for (const [k, v] of Object.entries(snap.dainviare || {})) if (!out[k]) out[k] = v;
     rawSet(OUT_STORE, out);
     if (!Object.keys(loadJson("cartellino.orario")).length && snap.orario) rawSet("cartellino.orario", snap.orario);
+    const man = manuals();
+    for (const m of Array.isArray(snap.manuali) ? snap.manuali : []) if (!man.some((x) => x.id === m.id)) man.push(m);
+    rawSet("cartellino.manuali", man);
     if (snap.company && state.company) {
       for (const k of ["soloInvitati", "gps", "soloQr"]) if (snap.company[k] && !state.company[k]) state.company[k] = snap.company[k];
       try { localStorage.setItem(STORE, JSON.stringify(state.company)); } catch { /* il browser non salva */ }
@@ -5130,15 +5162,64 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     const rows = Object.entries(pe).filter(([, v]) => v.invito && !v.eliminato)
       .sort(([, a], [, b]) => (a.invito.cognome + a.invito.nome).localeCompare(b.invito.cognome + b.invito.nome, "it"));
     table($("tStaff"),
-      [{ t: "Dipendente" }, { t: "Mansione" }, { t: "Stato" }, { t: "" }],
+      [{ t: "Dipendente" }, { t: "Mansione" }, { t: "Ore al giorno" }, { t: "Stato" }, { t: "" }],
       rows.map(([cf, v]) => ({ cells: [
         `<b>${esc(v.invito.cognome)} ${esc(v.invito.nome)}</b><br><span class="note">${esc(cf)}</span>`,
         esc(v.mansione || v.invito.mansione),
-        v.uscito ? `<span class="pill bad">Non lavora più qui</span>` : active.has(cf) ? `<span class="pill ok">✅ Attivo</span>` : `<span class="pill warn">⏳ Invito mandato</span>`,
-        `<button class="btn-small" data-staff="resend" data-cf="${esc(cf)}">📨 Rimanda invito</button> <button class="btn-small" data-staff="delete" data-cf="${esc(cf)}">🗑 Elimina</button>`,
+        `<input type="number" min="1" max="24" step="0.5" data-ore="${esc(cf)}" value="${esc(v.oreGiorno || "")}" placeholder="${esc(String(L.normalizeRules(loadJson("cartellino.orario")).oreGiorno))}" style="width:70px" title="Vuoto = come la ditta. Part-time: scrivi le sue ore.">`,
+        v.uscito ? `<span class="pill bad">Non lavora più qui</span>` : v.senzaTelefono ? `<span class="pill warn">📝 Senza telefono</span>` : active.has(cf) ? `<span class="pill ok">✅ Attivo</span>` : `<span class="pill warn">⏳ Invito mandato</span>`,
+        (v.senzaTelefono ? "" : `<button class="btn-small" data-staff="resend" data-cf="${esc(cf)}">📨 Rimanda invito</button> `) + `<button class="btn-small" data-staff="delete" data-cf="${esc(cf)}">🗑 Elimina</button>`,
       ] })),
       "Nessun dipendente: crea il primo qui sopra.");
+    const sel = $("manCf"), cur = sel.value;
+    sel.innerHTML = rows.filter(([, v]) => !v.uscito).map(([cf, v]) => `<option value="${esc(cf)}">${esc(v.invito.cognome)} ${esc(v.invito.nome)}</option>`).join("");
+    if (cur) sel.value = cur;
+    if (!$("manDate").value) $("manDate").value = ymd(new Date());
   }
+  // ---------------------------------------------------------- ore scritte dal DATORE (sempre segnate, mai confuse con le timbrature)
+  const MAN_STORE = "cartellino.manuali";
+  function manuals() { try { const v = JSON.parse(localStorage.getItem(MAN_STORE) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
+  function buildAllShifts() {
+    const shifts = L.buildShifts(L.applyCorrections(state.data.attendances, state.data.corrections, decisions()));
+    const pe = people();
+    for (const m of manuals()) {
+      const v = pe[m.cf] || {};
+      if (v.eliminato) continue;
+      const [h1, m1] = m.in.split(":").map(Number), [h2, m2] = m.out.split(":").map(Number);
+      let minutes = h2 * 60 + m2 - (h1 * 60 + m1);
+      if (minutes <= 0) minutes += 1440; // turno di notte
+      const name = v.invito ? `${v.invito.cognome} ${v.invito.nome}` : (state.data.names.get(m.cf) || m.cf);
+      shifts.push({ cf: m.cf, name, date: m.date, in: m.in, out: m.out, minutes, task: v.mansione || (v.invito && v.invito.mansione) || "", place: "", placeTipo: "", placeIds: [], anomaly: null, manual: true, manualId: m.id, motivo: m.motivo || "" });
+      if (!state.data.names.has(m.cf)) state.data.names.set(m.cf, name);
+    }
+    return shifts.sort((x, y) => (x.date + x.name).localeCompare(y.date + y.name));
+  }
+  $("manAdd").onclick = async () => {
+    const e = (t) => { $("manError").textContent = t; };
+    const cf = $("manCf").value, date = $("manDate").value, tin = $("manIn").value, tout = $("manOut").value, motivo = $("manWhy").value.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!cf) return e("Prima crea il dipendente.");
+    if (!/^\d{4}-\d\d-\d\d$/.test(date)) return e("Scegli il giorno.");
+    if (date > ymd(new Date())) return e("Il giorno non può essere nel futuro.");
+    if (!/^\d\d:\d\d$/.test(tin) || !/^\d\d:\d\d$/.test(tout) || tin === tout) return e("Scrivi entrata e uscita (es. 08:00 e 17:00).");
+    if (!motivo) return e("Scrivi il motivo (es. senza telefono, telefono rotto).");
+    e("");
+    const b = new Uint8Array(8);
+    crypto.getRandomValues(b);
+    const list = manuals();
+    list.push({ id: L.bytesToHex(b), cf, date, in: tin, out: tout, motivo, at: new Date().toISOString() });
+    saveJson(MAN_STORE, list);
+    $("manWhy").value = "";
+    $("manError").innerHTML = `<span class="ok">✓ Aggiunto (${esc(date.split("-").reverse().join("/"))} ${esc(tin)}–${esc(tout)}).</span>`;
+    await recompute();
+  };
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-delman]");
+    if (!b) return;
+    if (!confirm("Togliere queste ore scritte a mano?")) return;
+    saveJson(MAN_STORE, manuals().filter((m) => m.id !== b.dataset.delman));
+    await recompute();
+  });
+
   async function sendInvite(cf) {
     const v = people()[cf];
     if (!v || !v.invito) return;
@@ -5153,17 +5234,30 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     if (err) { $("newError").textContent = err; return; }
     if (!state.key) { $("newError").textContent = "Scrivi prima la password (riquadro in alto)."; return; }
     $("newError").textContent = "";
+    const noPhone = $("newNoPhone").checked;
     const pe = people();
     const prev = pe[data.cf] || {};
     pe[data.cf] = { ...prev, eliminato: false, uscito: prev.eliminato ? null : prev.uscito,
+      senzaTelefono: noPhone,
       invito: { at: new Date().toISOString(), nome: L.normalizeName(data.nome), cognome: L.normalizeName(data.cognome), mansione: data.mansione.replace(/\s+/g, " ").trim() } };
     if (!prev.mansione) delete pe[data.cf].mansione;
     saveJson(PEOPLE_STORE, pe);
     for (const id of ["newNome", "newCognome", "newCf", "newMansione"]) $(id).value = "";
+    $("newNoPhone").checked = false;
     renderStaff();
-    await sendInvite(data.cf);
+    if (noPhone) { $("manualBox").open = true; $("manCf").value = data.cf; }
+    else await sendInvite(data.cf);
     if (state.contents.length) await recompute();
   };
+  $("tStaff").addEventListener("change", async (e) => {
+    const inp = e.target.closest("[data-ore]");
+    if (!inp) return;
+    const pe = people(), cf = inp.dataset.ore;
+    const n = Number(String(inp.value).replace(",", "."));
+    pe[cf] = { ...(pe[cf] || {}), oreGiorno: n > 0 && n <= 24 ? n : null };
+    saveJson(PEOPLE_STORE, pe);
+    if (state.data) safeRender();
+  });
   $("tStaff").addEventListener("click", async (e) => {
     const b = e.target.closest("[data-staff]");
     if (!b) return;
