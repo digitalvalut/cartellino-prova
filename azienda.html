@@ -110,7 +110,9 @@
   body[data-view] #folderCard { display: none !important; }
   body[data-view="report"] #folderCard { display: block !important; }
   body[data-view]:not([data-view="oggi"]) #folderWarn { display: none !important; }
-  body[data-view="qr"] #sheetCard, body[data-view="qr"] #places, body[data-view="qr"] #resetBox, body[data-view="qr"] #rulesCard { display: block !important; }
+  body[data-view="qr"] #sheetCard, body[data-view="qr"] #places, body[data-view="qr"] #resetBox, body[data-view="qr"] #rulesCard, body[data-view="qr"] #sosCard { display: block !important; }
+  body[data-view] #sosCard { display: none !important; }
+  body[data-view="qr"] #sosCard { display: block !important; }
   #results .stats { display: none !important; }
   body[data-view="oggi"] #monthBar { display: none !important; }
   body[data-view="oggi"] #results .panel[data-panel="people"] { display: block !important; }
@@ -186,6 +188,8 @@
       <p class="note"><b>Hai già Cartellino su un altro computer?</b> Apri la tua cartella dei dati: ritrovi tutto con la tua password.</p>
       <button id="setupFromFolder">📁 Apri la cartella dei dati</button>
       <p id="setupFolderInfo" class="ok"></p>
+      <label class="note hidden" id="setupSosBox" style="display:block">🆘 Hai perso la password? Scrivi il codice del <b>foglio di emergenza</b>
+        (e sopra una NUOVA password due volte):<br><input id="setupSos" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="width:330px;text-transform:uppercase" autocomplete="off"></label>
     </div>
   </section>
 
@@ -223,6 +227,16 @@
         <button class="primary" id="unlockBtn">Apri</button>
       </div>
       <p id="unlockError" class="bad" style="min-height:1.4em"></p>
+      <details id="lostBox" style="margin-top:6px">
+        <summary style="cursor:pointer" class="note">🆘 Ho perso la password (ho il foglio di emergenza)</summary>
+        <div class="row" style="align-items:flex-end;margin-top:8px">
+          <label class="note">Codice del foglio di emergenza<br><input id="lostCode" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="width:330px;text-transform:uppercase" autocomplete="off"></label>
+          <label class="note">Nuova password<br><input type="password" id="lostPwd" autocomplete="new-password" style="width:180px"></label>
+          <label class="note">Riscrivila<br><input type="password" id="lostPwd2" autocomplete="new-password" style="width:180px"></label>
+          <button class="primary" id="lostBtn">Riapri e cambia password</button>
+        </div>
+        <p id="lostError" class="bad" style="min-height:1.2em"></p>
+      </details>
     </div>
     <div id="dropBox" class="hidden">
       <p class="muted"><span class="ok">✓ Pronto.</span> Trascina qui i file che ti hanno mandato i dipendenti (anche tanti insieme).</p>
@@ -333,6 +347,14 @@
     <h2>Ancora nessun report</h2>
     <p class="muted">Quando i dipendenti ti mandano i report, importali da <b>📥 Report</b>: qui comparirà tutto.</p>
     <button class="primary" data-goview="report">📥 Vai ai report</button>
+  </section>
+
+  <section class="card hidden noprint" id="sosCard">
+    <h2>🆘 Foglio di emergenza</h2>
+    <p class="muted">Se un giorno perdi la password, con questo foglio riapri <b>tutti</b> i dati e ne scegli una nuova
+      (i cartelli e i telefoni restano buoni). Stampalo e mettilo in cassaforte: chi ha il foglio può aprire i dati.</p>
+    <p id="sosState"></p>
+    <button class="primary" id="sosBtn">🖨️ Crea e stampa il foglio di emergenza</button>
   </section>
 
   <section class="card hidden noprint" id="rulesCard">
@@ -2899,6 +2921,47 @@ var qrcode = function() {
     return { scalar, publicKeyHex, fingerprint: await fingerprint(publicKeyHex) };
   }
 
+  // ------------------------------------------------------ FOGLIO DI EMERGENZA e NUOVA PASSWORD
+  // La chiave dell'azienda NON cambia mai (è nei telefoni e nei cartelli): si "avvolge" (cifra) con un altro segreto.
+  // - codice di recupero (stampato sul foglio di emergenza): riapre la chiave se la password è persa;
+  // - nuova password scelta dopo il recupero: da quel momento apre la chiave al posto di quella vecchia.
+  const RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  /** Codice di recupero: 6 gruppi di 5 caratteri (circa 150 bit), facile da ricopiare (niente 0/O, 1/I). */
+  function newRecoveryCode() {
+    const b = crypto.getRandomValues(new Uint8Array(30));
+    const chars = [...b].map((x) => RECOVERY_ALPHABET[x % 32]).join("");
+    return chars.match(/.{5}/g).join("-");
+  }
+  const normRecovery = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/O/g, "0").replace(/I/g, "1");
+  async function wrapAesKey(secret, salt) {
+    const base = await subtle.importKey("raw", enc.encode(secret), "PBKDF2", false, ["deriveKey"]);
+    return subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: KDF_ITERATIONS }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  /** Avvolge la chiave dell'azienda con un segreto (password nuova o codice di recupero). */
+  async function wrapCompanyKey(companyKey, secret, kind) {
+    const s2 = kind === "recupero" ? normRecovery(secret) : String(secret).normalize("NFC");
+    if (kind !== "recupero") { const e = validatePassword(s2); if (e) throw new Error(e); }
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, await wrapAesKey(s2, salt), enc.encode(companyKey.scalar.toString(16).padStart(64, "0"))));
+    return { kind, salt: bytesToHex(salt), iv: bytesToHex(iv), ct: bytesToHex(ct), publicKeyHex: companyKey.publicKeyHex };
+  }
+  /** Riapre la chiave dell'azienda con il segreto giusto, altrimenti errore. */
+  async function unwrapCompanyKey(blob, secret) {
+    if (!blob || !blob.ct) throw new Error("Nessuna chiave salvata.");
+    const s2 = blob.kind === "recupero" ? normRecovery(secret) : String(secret).normalize("NFC");
+    let hex;
+    try {
+      hex = new TextDecoder().decode(await subtle.decrypt({ name: "AES-GCM", iv: hexToBytes(blob.iv) }, await wrapAesKey(s2, hexToBytes(blob.salt)), hexToBytes(blob.ct)));
+    } catch {
+      throw new Error(blob.kind === "recupero" ? "Codice di recupero sbagliato." : "Password sbagliata.");
+    }
+    const scalar = BigInt("0x" + hex);
+    const publicKeyHex = pointToHex(pointMul(scalar, G));
+    if (publicKeyHex !== blob.publicKeyHex) throw new Error("Chiave non valida.");
+    return { scalar, publicKeyHex, fingerprint: await fingerprint(publicKeyHex) };
+  }
+
   /** Chiave AES del report: ECDH (scalare dell'azienda x chiave effimera del telefono) -> HKDF-SHA256. */
   async function reportAesKey(scalar, epkHex) {
     const shared = pointMul(scalar, hexToPoint(epkHex));
@@ -3534,7 +3597,8 @@ var qrcode = function() {
     const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, await vaultKey(companyKey), enc.encode(JSON.stringify(data))));
     return JSON.stringify({
       format: VAULT_FORMAT, v: 1, savedAt: new Date().toISOString(),
-      azienda: { name: String(company.name || ""), code: String(company.code || ""), color: String(company.color || ""), publicKeyHex: companyKey.publicKeyHex },
+      azienda: { name: String(company.name || ""), code: String(company.code || ""), color: String(company.color || ""), publicKeyHex: companyKey.publicKeyHex,
+        recupero: company.recupero || null, avvolta: company.avvolta || null },
       iv: bytesToHex(iv), ct: bytesToHex(ct),
     });
   }
@@ -3780,6 +3844,9 @@ var qrcode = function() {
     checkEmployee,
     createInvite,
     sealVault,
+    newRecoveryCode,
+    wrapCompanyKey,
+    unwrapCompanyKey,
     openVault,
     vaultHeader,
     inviteLink,
@@ -3823,7 +3890,7 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611200938"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611201000"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -3861,7 +3928,8 @@ var qrcode = function() {
   function show() {
     const c = state.company;
     $("setup").classList.toggle("hidden", !!c);
-    for (const id of ["sheetCard", "report", "resetBox", "places", "rulesCard", "staffCard"]) $(id).classList.toggle("hidden", !c);
+    for (const id of ["sheetCard", "report", "resetBox", "places", "rulesCard", "staffCard", "sosCard"]) $(id).classList.toggle("hidden", !c);
+    if (c) renderSos();
     if (!c) return;
     document.querySelector("header").style.background = "#" + c.color;
     $("sheetCompany").textContent = c.name;
@@ -3964,11 +4032,21 @@ var qrcode = function() {
       const key = await L.deriveCompanyKey(code, pwd);
       if (PENDING.folder) {
         // ripristino da un altro computer: stessa azienda, stessa password
-        if (key.publicKeyHex !== PENDING.folder.header.publicKeyHex) return err("Password sbagliata per questi dati (o codice diverso).");
-        const snap = await L.openVault(key, PENDING.folder.text);
+        let useKey = key, newWrap = null;
+        const sosCode = $("setupSos").value.trim();
+        if (sosCode) {
+          // password persa: si riapre con il foglio di emergenza e la password scritta sopra diventa quella nuova
+          try { useKey = await L.unwrapCompanyKey(PENDING.folder.header.recupero, sosCode); } catch (e2) { return err(e2.message || "Codice di recupero sbagliato."); }
+          newWrap = await L.wrapCompanyKey(useKey, pwd, "password");
+        } else if (key.publicKeyHex !== PENDING.folder.header.publicKeyHex) {
+          useKey = await openWithPassword({ ...PENDING.folder.header, code }, pwd);
+          if (!useKey) return err("Password sbagliata per questi dati (o codice diverso).");
+        }
+        const snap = await L.openVault(useKey, PENDING.folder.text);
         restoreSnapshot(snap);
-        state.company = { ...(snap.company || {}), name, code, color: (snap.company && snap.company.color) || color, publicKeyHex: key.publicKeyHex, fingerprint: key.fingerprint, appUrl: (snap.company && snap.company.appUrl) || appUrl };
-        state.key = key;
+        state.company = { ...(snap.company || {}), name, code, color: (snap.company && snap.company.color) || color, publicKeyHex: useKey.publicKeyHex, fingerprint: useKey.fingerprint, appUrl: (snap.company && snap.company.appUrl) || appUrl };
+        state.key = useKey;
+        if (newWrap) state.company.avvolta = newWrap;
         save(state.company);
         await folderSaveHandle(PENDING.folder.handle);
         PENDING.folder = null;
@@ -4010,8 +4088,8 @@ var qrcode = function() {
     $("unlockBtn").disabled = true;
     $("unlockBtn").textContent = "Controllo…";
     try {
-      const key = await L.deriveCompanyKey(state.company.code, pwd);
-      if (key.publicKeyHex !== state.company.publicKeyHex) {
+      const key = await openWithPassword(state.company, pwd);
+      if (!key) {
         $("unlockError").textContent = "Password sbagliata.";
         return;
       }
@@ -4970,6 +5048,69 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     alert(`Il file ${f.name} è nella cartella Download.\nSi apre l'email per il consulente: allega il file e premi Invia.`);
   };
 
+  // ---------------------------------------------------------- PASSWORD: originale, nuova (dopo il recupero), foglio di emergenza
+  /** Apre la chiave dell'azienda con la password: quella iniziale (calcolata) oppure quella nuova scelta dopo il recupero. */
+  async function openWithPassword(company, pwd) {
+    try {
+      const k = await L.deriveCompanyKey(company.code, pwd);
+      if (k.publicKeyHex === company.publicKeyHex) return k;
+    } catch { /* password troppo facile: può essere solo sbagliata */ }
+    if (company.avvolta) {
+      try { return await L.unwrapCompanyKey(company.avvolta, pwd); } catch { /* sbagliata */ }
+    }
+    return null;
+  }
+  function renderSos() {
+    const r = state.company && state.company.recupero;
+    $("sosState").innerHTML = r && r.at
+      ? `<span class="ok">✅ Foglio creato il ${esc(new Date(r.at).toLocaleDateString("it-IT"))}.</span> <span class="note">Se lo perdi, creane uno nuovo: quello vecchio non vale più.</span>`
+      : `<span class="bad">⚠️ Non ancora creato: se perdi la password, i dati non si riaprono.</span>`;
+  }
+  $("sosBtn").onclick = async () => {
+    if (!state.key) { showError("Scrivi prima la password."); return; }
+    if (state.company.recupero && !confirm("Esiste già un foglio di emergenza: crearne uno nuovo rende NON valido quello vecchio. Continuare?")) return;
+    const code = L.newRecoveryCode();
+    window.__cartellinoSos.lastCode = code;
+    state.company.recupero = { ...(await L.wrapCompanyKey(state.key, code, "recupero")), at: new Date().toISOString() };
+    save(state.company);
+    renderSos();
+    const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Foglio di emergenza - ${esc(state.company.name)}</title>
+<style>body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:30px;color:#0f172a}h1{margin:0 0 6px}.code{font:700 30px/1.5 Consolas,monospace;letter-spacing:2px;border:3px solid #0f172a;border-radius:14px;padding:18px;text-align:center;margin:22px 0}
+li{margin:6px 0;font-size:16px}.warn{background:#fef3c7;border-radius:10px;padding:10px 14px}</style></head><body>
+<h1>🆘 Cartellino – Foglio di emergenza</h1>
+<p><b>${esc(state.company.name)}</b> · codice cliente <b>${esc(state.company.code)}</b> · creato il ${esc(new Date().toLocaleDateString("it-IT"))}</p>
+<div class="code">${esc(code)}</div>
+<ol><li>Apri Cartellino – Area Azienda.</li><li>Sotto la password tocca <b>"Ho perso la password"</b> (su un computer nuovo: prima "Apri la cartella dei dati").</li>
+<li>Scrivi il codice qui sopra e una <b>nuova password</b>: ritrovi tutto, i cartelli e i telefoni restano buoni.</li></ol>
+<p class="warn">⚠️ Conserva questo foglio in un posto sicuro (cassaforte). Chi ha questo foglio può aprire i dati dei dipendenti.
+Digital Valut non ne ha una copia.</p>
+<script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { alert("Codice di emergenza (scrivilo e conservalo):\n\n" + code); return; }
+    w.document.write(html);
+    w.document.close();
+  };
+  window.__cartellinoSos = { lastCode: null }; // usato dai test automatici
+  $("lostBtn").onclick = async () => {
+    const e = (t) => { $("lostError").textContent = t; };
+    const code = $("lostCode").value, pwd = $("lostPwd").value;
+    if (!state.company.recupero) return e("Su questo computer non c'è il foglio di emergenza: apri prima la cartella dei dati.");
+    const pErr = L.validatePassword(pwd);
+    if (pErr) return e(pErr);
+    if (pwd !== $("lostPwd2").value) return e("Le due password non sono uguali.");
+    e("Controllo…");
+    try {
+      const key = await L.unwrapCompanyKey(state.company.recupero, code);
+      state.company.avvolta = await L.wrapCompanyKey(key, pwd, "password");
+      save(state.company);
+      state.key = key;
+      for (const id of ["lostCode", "lostPwd", "lostPwd2"]) $(id).value = "";
+      e("");
+      alert("Fatto: da adesso usa la NUOVA password. Scrivila sul foglio.");
+      unlocked();
+    } catch (err) { e(err.message || "Errore"); }
+  };
+
   // ---------------------------------------------------------- CARTELLA DEI DATI (mai più dati persi)
   // Tutto si salva da solo, cifrato con la password, nella cartella scelta dal datore (Desktop, Drive, chiavetta).
   var FOLDER = { handle: null, ok: false, savedAt: null, timer: null, needPermission: false, error: "" };
@@ -5151,6 +5292,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     if (head.color) { color = head.color; document.querySelectorAll(".swatch").forEach((sw) => sw.classList.toggle("sel", sw.dataset.c === head.color)); }
     $("setupError").textContent = "";
     $("setupFolderInfo").textContent = `✅ Trovati i dati di ${head.name} (${head.code}). Scrivi la TUA password (due volte) e premi "Prepara tutto".`;
+    $("setupSosBox").classList.toggle("hidden", !head.recupero);
   }
   $("setupFromFolder").onclick = async () => setupFromFolder(await pickFolder());
   window.__cartellinoFolder = {
