@@ -329,7 +329,7 @@
 
   <section class="card hidden noprint" id="startCard">
     <h2>🚀 Primi passi</h2>
-    <p class="muted" style="margin:0">Quattro cose da fare una volta sola. Si spuntano da sole.</p>
+    <p class="muted" style="margin:0">Poche cose da fare una volta sola. Si spuntano da sole.</p>
     <ol id="startList"></ol>
   </section>
 
@@ -3567,6 +3567,16 @@ var qrcode = function() {
   async function cassettaBox(publicKeyHex) {
     return bytesToHex(new Uint8Array(await subtle.digest("SHA-256", enc.encode(String(publicKeyHex).toLowerCase())))).slice(0, 32);
   }
+  /** Casella del TELEFONO di un dipendente (dalla sua chiave pubblica, anche compressa). */
+  async function deviceBox(devicePublicKeyHex) {
+    return cassettaBox(bytesToHex(decompressP256(hexToBytes(devicePublicKeyHex))));
+  }
+  /** Risposta firmata dell'azienda ({ m, f }) chiusa a chiave per UN telefono: { to, data, digest }. */
+  async function sealForDevice(devicePublicKeyHex, tenantId, signed) {
+    const data = JSON.stringify(await encryptReport(JSON.stringify({ k: "messaggio", m: signed.m, f: signed.f }), devicePublicKeyHex, tenantId));
+    const digest = bytesToHex(new Uint8Array(await subtle.digest("SHA-256", enc.encode(data))));
+    return { to: await deviceBox(devicePublicKeyHex), data, digest };
+  }
   /** Richiesta firmata dal datore per la cassetta: { pub, ts, sig } (+ i campi dati). */
   async function cassettaSigned(companyKey, action, data = "", extra = {}) {
     const box = await cassettaBox(companyKey.publicKeyHex);
@@ -3893,6 +3903,8 @@ var qrcode = function() {
     signCompanyData,
     cassettaBox,
     cassettaSigned,
+    deviceBox,
+    sealForDevice,
     GEO_TEXT,
     applyCorrections,
     createCompanyMessage,
@@ -3952,7 +3964,7 @@ var qrcode = function() {
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
   const DEFAULT_CASSETTA_URL = "https://cartellino-cassetta.burbeng78.workers.dev";
-  const AREA_VERSION = "202611230921"; // sostituito quando si crea il pacchetto
+  const AREA_VERSION = "202611231003"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -4643,6 +4655,10 @@ var qrcode = function() {
     if (!state.key) { showError("Scrivi prima la tua password (riquadro \"I report dei dipendenti\")."); return null; }
     const signed = await L.createCompanyMessage(state.key, { tenantId: state.company.code, cf, kind, ...fields });
     const link = L.companyMessageLink(state.company.appUrl || appUrl, signed);
+    if (await autoDeliver(cf, signed)) {
+      toast(`📬 Risposta mandata da sola a ${(state.data && state.data.names.get(cf)) || cf}: la vede appena apre Cartellino.`);
+      return link;
+    }
     showSend(title, text, link);
     return link;
   }
@@ -4676,6 +4692,7 @@ var qrcode = function() {
         queueReply(cf, { k: "ferie", richiesta: id, esito, ...(nota ? { nota } : {}), etichetta });
         const d = decisions(); d[id] = { esito, at: new Date().toISOString(), sent: false }; saveJson(DEC_STORE, d);
         safeRender();
+        if (state.company.cassetta) await sendQueued(cf);
       } else if (act === "resend") {
         const last = (people()[cf] || {}).ultimoInvio;
         if (last) showSend("Ultime risposte inviate", `Di nuovo per ${who}.`, last);
@@ -4686,11 +4703,13 @@ var qrcode = function() {
         queueReply(cf, { k: "mansione", mansione: nuova });
         const p = people(); p[cf] = { ...(p[cf] || {}), mansione: nuova, mansioneAt: new Date().toISOString() }; saveJson(PEOPLE_STORE, p);
         safeRender();
+        if (state.company.cassetta) await sendQueued(cf);
       } else if (act === "left") {
         if (!confirm(`${who} non lavora più in azienda? Il suo telefono non potrà più timbrare (potrà solo mandare l'ultimo report).`)) return;
         queueReply(cf, { k: "uscito" });
         const p = people(); p[cf] = { ...(p[cf] || {}), uscito: new Date().toISOString() }; saveJson(PEOPLE_STORE, p);
         safeRender();
+        if (state.company.cassetta) await sendQueued(cf);
       } else if (act === "hide" || act === "unhide") {
         if (act === "hide" && !confirm(`Togliere ${who} dall'elenco? I suoi dati restano negli archivi e potrai rimetterlo quando vuoi.`)) return;
         const p = people(); p[cf] = { ...(p[cf] || {}), nascosto: act === "hide" }; saveJson(PEOPLE_STORE, p);
@@ -5118,6 +5137,42 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     alert(`Il file ${f.name} è nella cartella Download.\nSi apre l'email per il consulente: allega il file e premi Invia.`);
   };
 
+  // ---------------------------------------------------------- avviso breve in basso
+  function toast(text) {
+    let t = document.getElementById("toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "toast";
+      t.className = "noprint";
+      t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#065f46;color:#fff;padding:12px 18px;border-radius:12px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.2);z-index:50;max-width:90vw";
+      document.body.appendChild(t);
+    }
+    t.textContent = text;
+    t.style.display = "block";
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { t.style.display = "none"; }, 5000);
+  }
+
+  /** Chiave del telefono dell'operaio (dall'ultimo report arrivato da lui): serve a chiudere la risposta solo per lui. */
+  function deviceKeyFor(cf) {
+    let best = null;
+    for (const c of state.contents) if (c.cf === cf && c.devicePublicKey && (!best || String(c.exportedAt || "") > String(best.exportedAt || ""))) best = c;
+    return best ? best.devicePublicKey : null;
+  }
+  /** Con la cassetta accesa: la risposta firmata va DA SOLA nella casella del telefono. false = si usa il link come prima. */
+  async function autoDeliver(cf, signed) {
+    if (!state.company || !state.company.cassetta || !state.key) return false;
+    const dev = deviceKeyFor(cf);
+    if (!dev) return false;
+    try {
+      const sealed = await L.sealForDevice(dev, state.company.code, signed);
+      await cassettaPost("consegna", `${sealed.to}|${sealed.digest}`, { to: sealed.to, data: sealed.data });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------- CASSETTA POSTALE (invio automatico, facoltativo)
   const AUTO = { timer: null, busy: false, lastAt: null, error: "" };
   async function cassettaPost(action, data, extra) {
@@ -5146,6 +5201,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
       await cassettaPost("attiva", want ? "1" : "0", { on: want });
       state.company.cassetta = want;
       save(state.company);
+      renderStart();
       AUTO.error = "";
       if (want && window.Notification && Notification.permission === "default") { try { await Notification.requestPermission(); } catch { /* niente */ } }
       if (want) await autoPoll();
@@ -5243,6 +5299,7 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
       { id: "sos", done: !!c.recupero, t: "🆘 Stampa il foglio di emergenza (password persa)", b: "Vai" },
       { id: "sheet", done: !!c.cartelloStampato, t: "🖨️ Stampa il cartello \"TIMBRA QUI\" e appendilo", b: "Vai" },
       { id: "staff", done: anyStaff, t: "👷 Crea il primo dipendente e mandagli l'invito", b: "Vai" },
+      { id: "auto", done: !!c.cassetta || !!c.cassettaNo, t: "📬 Ricevi tutto in automatico (consigliato: nessuno deve mandare niente)", b: "Accendi", no: true },
     ];
   }
   function startDone() { return startItems().every((x) => x.done); }
@@ -5250,12 +5307,15 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     if (!$("startCard") || !state.company) return;
     const items = startItems();
     $("startCard").classList.toggle("hidden", !state.key || items.every((x) => x.done));
-    $("startList").innerHTML = items.map((x) => `<li class="${x.done ? "done" : ""}" data-start="${x.id}"><span>${x.done ? "✅" : "⬜"}</span><span class="t">${esc(x.t)}</span>${x.done ? "" : `<button class="btn-small primary" data-startgo="${x.id}">${esc(x.b)}</button>`}</li>`).join("");
+    $("startList").innerHTML = items.map((x) => `<li class="${x.done ? "done" : ""}" data-start="${x.id}"><span>${x.done ? "✅" : "⬜"}</span><span class="t">${esc(x.t)}</span>${x.done ? "" : `<button class="btn-small primary" data-startgo="${x.id}">${esc(x.b)}</button>${x.no ? ` <button class="btn-small" data-startno="${x.id}">No, grazie</button>` : ""}`}</li>`).join("");
   }
   $("startList").addEventListener("click", async (e) => {
+    const no = e.target.closest("[data-startno]");
+    if (no && no.dataset.startno === "auto") { state.company.cassettaNo = true; save(state.company); renderStart(); return; }
     const b = e.target.closest("[data-startgo]");
     if (!b) return;
     const id = b.dataset.startgo;
+    if (id === "auto") { setView("qr"); $("autoCard").scrollIntoView({ behavior: "smooth" }); if (!$("optAuto").checked) $("optAuto").click(); return; }
     if (id === "folder") return $("folderWarnBtn").onclick();
     if (id === "sos") { setView("qr"); $("sosCard").scrollIntoView({ behavior: "smooth" }); return; }
     if (id === "sheet") { setView("qr"); return; }
