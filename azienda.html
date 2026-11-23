@@ -130,8 +130,10 @@
   body[data-view="report"] #folderCard { display: block !important; }
   body[data-view]:not([data-view="oggi"]) #folderWarn, body[data-view]:not([data-view="oggi"]) #startCard { display: none !important; }
   body[data-view="qr"] #sheetCard, body[data-view="qr"] #places, body[data-view="qr"] #resetBox, body[data-view="qr"] #rulesCard, body[data-view="qr"] #sosCard { display: block !important; }
-  body[data-view] #sosCard { display: none !important; }
-  body[data-view="qr"] #sosCard { display: block !important; }
+  body[data-view] #sosCard, body[data-view] #autoCard { display: none !important; }
+  body[data-view="qr"] #sosCard, body[data-view="qr"] #autoCard { display: block !important; }
+  body[data-view]:not([data-view="oggi"]) #autoNews { display: none !important; }
+  #autoNews ul { margin: 6px 0 0; padding-left: 20px; }
   #results .stats { display: none !important; }
   body[data-view="oggi"] #monthBar { display: none !important; }
   body[data-view="oggi"] #results .panel[data-panel="people"] { display: block !important; }
@@ -320,6 +322,11 @@
     </div>
   </section>
 
+  <section class="card hidden noprint" id="autoNews" style="border-color:#86efac;background:#f0fdf4">
+    <div class="row" style="justify-content:space-between"><b>📬 Arrivato in automatico</b><button class="btn-small" id="autoNewsClose">Ho visto</button></div>
+    <ul id="autoNewsList"></ul>
+  </section>
+
   <section class="card hidden noprint" id="startCard">
     <h2>🚀 Primi passi</h2>
     <p class="muted" style="margin:0">Quattro cose da fare una volta sola. Si spuntano da sole.</p>
@@ -374,6 +381,16 @@
     <h2>Ancora nessun report</h2>
     <p class="muted">Quando i dipendenti ti mandano i report, importali da <b>📥 Report</b>: qui comparirà tutto.</p>
     <button class="primary" data-goview="report">📥 Vai ai report</button>
+  </section>
+
+  <section class="card hidden noprint" id="autoCard">
+    <h2>📬 Ricevi timbrature e richieste in automatico</h2>
+    <p class="muted">Se la accendi, i telefoni dei dipendenti mandano <b>da soli</b> timbrature, ferie e permessi subito dopo averli
+      fatti: tu li ritrovi qui quando apri Cartellino (ogni giorno, ogni settimana o a fine mese, come vuoi) e, se è aperto,
+      ti compare un avviso. Niente più report da chiedere a fine mese. Passano da una "cassetta postale" su internet
+      <b>chiusi a chiave</b>: nessuno li può leggere, solo tu con la tua password.</p>
+    <label class="note" style="display:block;font-size:16px"><input type="checkbox" id="optAuto"> <b>Ricevi in automatico</b></label>
+    <p id="autoState" class="note" style="min-height:1.2em"></p>
   </section>
 
   <section class="card hidden noprint" id="sosCard">
@@ -3545,6 +3562,21 @@ var qrcode = function() {
     );
   }
 
+  // ------------------------------------------------------ CASSETTA POSTALE (facoltativa, cassetta/cassetta.mjs)
+  /** Casella dell'azienda: primi 32 caratteri di SHA-256 della chiave pubblica (hex minuscolo). */
+  async function cassettaBox(publicKeyHex) {
+    return bytesToHex(new Uint8Array(await subtle.digest("SHA-256", enc.encode(String(publicKeyHex).toLowerCase())))).slice(0, 32);
+  }
+  /** Richiesta firmata dal datore per la cassetta: { pub, ts, sig } (+ i campi dati). */
+  async function cassettaSigned(companyKey, action, data = "", extra = {}) {
+    const box = await cassettaBox(companyKey.publicKeyHex);
+    const ts = Date.now();
+    const key = await companySigningKey(companyKey);
+    const text = `cartellino-cassetta|1|${box}|${action}|${data}|${ts}`;
+    const sig = new Uint8Array(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc.encode(text)));
+    return { box, body: { pub: companyKey.publicKeyHex.toLowerCase(), ts, sig: bytesToHex(sig), ...extra } };
+  }
+
   /** Firma un oggetto qualsiasi: restituisce { m, f } da mettere nel link o nel QR. */
   async function signCompanyData(companyKey, data) {
     const m = bytesToB64url(enc.encode(JSON.stringify(data)));
@@ -3859,6 +3891,8 @@ var qrcode = function() {
     deriveCompanyKey,
     validatePassword,
     signCompanyData,
+    cassettaBox,
+    cassettaSigned,
     GEO_TEXT,
     applyCorrections,
     createCompanyMessage,
@@ -3917,7 +3951,8 @@ var qrcode = function() {
   const STORE = "cartellino.azienda";
   const DEFAULT_APP_URL = "https://digitalvalut.github.io/cartellino-prova/";
   const DEFAULT_LICENZE_URL = "https://digitalvalut.github.io/cartellino/licenze.json";
-  const AREA_VERSION = "202611201544"; // sostituito quando si crea il pacchetto
+  const DEFAULT_CASSETTA_URL = "https://cartellino-cassetta.burbeng78.workers.dev";
+  const AREA_VERSION = "202611230921"; // sostituito quando si crea il pacchetto
   const COLORS = ["0F62FE", "15803D", "B91C1C", "7C3AED", "C2410C", "0F172A"];
   const MAX_FILE_MB = 20;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -3943,6 +3978,7 @@ var qrcode = function() {
   const params = new URLSearchParams(location.search);
   const appUrl = (params.get("app") || DEFAULT_APP_URL).replace(/\/?$/, "/");
   const licenzeUrl = params.get("licenze") || DEFAULT_LICENZE_URL;
+  const cassettaUrl = (params.get("cassetta") || DEFAULT_CASSETTA_URL).replace(/\/+$/, "");
 
   const state = { company: load(), key: null, files: [], contents: [], data: null, shifts: [], month: null };
 
@@ -3955,7 +3991,7 @@ var qrcode = function() {
   function show() {
     const c = state.company;
     $("setup").classList.toggle("hidden", !!c);
-    for (const id of ["sheetCard", "report", "resetBox", "places", "rulesCard", "staffCard", "sosCard"]) $(id).classList.toggle("hidden", !c);
+    for (const id of ["sheetCard", "report", "resetBox", "places", "rulesCard", "staffCard", "sosCard", "autoCard"]) $(id).classList.toggle("hidden", !c);
     if (c) renderSos();
     if (!c) return;
     document.querySelector("header").style.background = "#" + c.color;
@@ -4142,6 +4178,7 @@ var qrcode = function() {
     refreshInboxState();
     renderStaff();
     initFolder();
+    autoStart();
   }
   $("unlockBtn").onclick = unlock;
   $("unlockPwd").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
@@ -4166,14 +4203,20 @@ var qrcode = function() {
       r.onerror = () => reject(r.error);
     });
   }
-  async function archivePut(name, text) {
-    saveReportToFolder(name, text);
+  async function archivePut(name, text, extra) {
+    saveReportToFolder(name, text, !!(extra && extra.auto));
     try {
       const h = L.bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
       const db = await archDb();
-      await new Promise((res, rej) => { const tx = db.transaction("report", "readwrite"); tx.objectStore("report").put({ key: h, name, text, savedAt: new Date().toISOString(), code: state.company.code }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+      await new Promise((res, rej) => { const tx = db.transaction("report", "readwrite"); tx.objectStore("report").put({ key: h, name, text, savedAt: new Date().toISOString(), code: state.company.code, ...(extra || {}) }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
       return h;
     } catch { return null; }
+  }
+  async function archiveDelete(key) {
+    try {
+      const db = await archDb();
+      await new Promise((res, rej) => { const tx = db.transaction("report", "readwrite"); tx.objectStore("report").delete(key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    } catch { /* niente */ }
   }
   async function archiveAll() {
     try {
@@ -4184,7 +4227,7 @@ var qrcode = function() {
   async function loadArchive() {
     const saved = (await archiveAll()).filter((x) => x.code === state.company.code);
     for (const s of saved) {
-      if (!state.files.some((f) => f.key === s.key)) state.files.push({ name: s.name, text: s.text, status: "", key: s.key, archived: true });
+      if (!state.files.some((f) => f.key === s.key)) state.files.push({ name: s.name, text: s.text, status: "", key: s.key, archived: true, auto: s.auto, exportedAt: s.exportedAt });
     }
   }
 
@@ -4288,7 +4331,7 @@ var qrcode = function() {
         const who = [content.lastName, content.firstName].filter(Boolean).join(" ");
         const n = (content.attendances || []).length + (content.leaveRequests || []).length;
         f.status = `ok|${f.archived ? "Dall'archivio" : "Aperto"}: ${who ? who + " (" + content.cf + ")" : content.cf} · ${n} registrazioni`;
-        if (!f.archived) await archivePut(f.name, f.text);
+        if (!f.archived) { await archivePut(f.name, f.text, f.auto ? { auto: f.auto, exportedAt: f.exportedAt } : null); f.archived = true; }
         state.contents.push(content);
       } catch (e) {
         f.status = "bad|" + e.message;
@@ -5075,6 +5118,122 @@ Scrivi l'email del consulente in ⚙️ Impostazioni → "Orario di lavoro e con
     alert(`Il file ${f.name} è nella cartella Download.\nSi apre l'email per il consulente: allega il file e premi Invia.`);
   };
 
+  // ---------------------------------------------------------- CASSETTA POSTALE (invio automatico, facoltativo)
+  const AUTO = { timer: null, busy: false, lastAt: null, error: "" };
+  async function cassettaPost(action, data, extra) {
+    const { box, body } = await L.cassettaSigned(state.key, action, data, extra);
+    const res = await fetch(`${cassettaUrl}/b/${box}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+    let j = {};
+    try { j = await res.json(); } catch { /* niente */ }
+    if (!res.ok) throw new Error(j.errore || "la cassetta non risponde (" + res.status + ")");
+    return j;
+  }
+  function renderAuto() {
+    if (!state.company) return;
+    const on = !!state.company.cassetta;
+    $("optAuto").checked = on;
+    $("autoState").innerHTML = !on
+      ? "Spenta: i dipendenti mandano il report a fine mese, come sempre."
+      : AUTO.error
+        ? `<span class="bad">⚠️ ${esc(AUTO.error)}</span> Riprovo da solo ogni minuto.`
+        : `<span class="ok">✅ Accesa.</span> ${AUTO.lastAt ? "Ultimo controllo: " + esc(new Date(AUTO.lastAt).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })) : "Controllo in corso…"}`;
+  }
+  $("optAuto").onchange = async () => {
+    const want = $("optAuto").checked;
+    if (!state.key) { $("optAuto").checked = !want; showError("Scrivi prima la password."); return; }
+    $("autoState").textContent = want ? "Accendo…" : "Spengo…";
+    try {
+      await cassettaPost("attiva", want ? "1" : "0", { on: want });
+      state.company.cassetta = want;
+      save(state.company);
+      AUTO.error = "";
+      if (want && window.Notification && Notification.permission === "default") { try { await Notification.requestPermission(); } catch { /* niente */ } }
+      if (want) await autoPoll();
+    } catch (e) {
+      $("optAuto").checked = !want;
+      AUTO.error = "";
+      $("autoState").innerHTML = `<span class="bad">Non riesco a ${want ? "accenderla" : "spegnerla"}: ${esc(e.message || "errore")}. Controlla internet e riprova.</span>`;
+      return;
+    }
+    renderAuto();
+  };
+  $("autoNewsClose").onclick = () => { $("autoNewsList").innerHTML = ""; $("autoNews").classList.add("hidden"); };
+  /** Una scatola arrivata: diventa (o sostituisce) il file automatico di quel telefono per quel mese. */
+  async function autoAccept(text) {
+    const report = L.parseReportFile(text);
+    if (report.tenantId !== state.company.code) throw new Error("altra azienda");
+    const content = await L.decryptReport(report, state.key);
+    const dev = String(content.devicePublicKey || content.cf || "").slice(-8);
+    const month = String(content.exportedAt || new Date().toISOString()).slice(0, 7);
+    const auto = `${content.cf}|${dev}|${month}`;
+    const old = state.files.find((f) => f.auto === auto);
+    if (old && String(old.exportedAt || "") >= String(content.exportedAt || "")) return false; // arrivata prima una più nuova
+    const key = L.bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
+    if (old) { state.files = state.files.filter((f) => f !== old); await archiveDelete(old.key); }
+    const who = [content.lastName, content.firstName].filter(Boolean).join("-").replace(/[^\p{L}-]/gu, "") || content.cf;
+    state.files.push({ name: `Automatico-${who}-${month}-${dev}.cartellino.json`, text, status: "", key, auto, exportedAt: content.exportedAt });
+    return true;
+  }
+  function autoNewsFrom(beforeAtt, beforeLeaves) {
+    const items = [];
+    if (!state.data) return items;
+    for (const l of state.data.leaves) if (!beforeLeaves.has(l.id)) items.push(`🗓️ <b>${esc(l.name)}</b> ha chiesto <b>${esc(String(l.type || "").toLowerCase().replace(/_/g, " "))}</b> dal ${esc(fmtDate(l.startDate))} al ${esc(fmtDate(l.endDate))}`);
+    const fresh = state.data.attendances.filter((a) => !beforeAtt.has(a.id));
+    const byName = new Map();
+    for (const a of fresh) byName.set(a.name, (byName.get(a.name) || []).concat(a));
+    for (const [name, list] of byName) {
+      const last = list.sort((x, y) => String(x.timestamp).localeCompare(String(y.timestamp)))[list.length - 1];
+      const t = last.time || "";
+      items.push(`🕐 <b>${esc(name)}</b>: ${list.length === 1 ? "" : list.length + " timbrature, ultima "}${esc(String(last.type || ""))} alle ${esc(t)}`);
+    }
+    return items;
+  }
+  async function autoPoll() {
+    if (AUTO.busy || !state.key || !state.company || !state.company.cassetta) return;
+    AUTO.busy = true;
+    const beforeAtt = new Set(((state.data && state.data.attendances) || []).map((a) => a.id));
+    const beforeLeaves = new Set(((state.data && state.data.leaves) || []).map((l) => l.id));
+    let changed = false;
+    try {
+      for (let round = 0; round < 20; round++) {
+        const { items, more } = await cassettaPost("ritira", "");
+        if (!items || !items.length) break;
+        const done = [];
+        for (const it of items) {
+          try { if (await autoAccept(it.data)) changed = true; } catch { /* scatola non valida (altra azienda o rovinata): si butta */ }
+          done.push(it.id);
+        }
+        if (changed) await reopenFiles(); // salva prima (archivio + cartella dei dati)…
+        await cassettaPost("cancella", done.join(","), { ids: done }); // …poi svuota la cassetta
+        if (!more) break;
+      }
+      AUTO.error = "";
+      AUTO.lastAt = new Date().toISOString();
+    } catch (e) {
+      AUTO.error = "Cassetta non raggiungibile (" + (e.message || "errore") + ").";
+    } finally {
+      AUTO.busy = false;
+    }
+    if (changed && beforeAtt.size + beforeLeaves.size >= 0) {
+      const news = autoNewsFrom(beforeAtt, beforeLeaves);
+      if (news.length) {
+        $("autoNewsList").innerHTML = news.map((n) => `<li>${n}</li>`).join("") + $("autoNewsList").innerHTML;
+        $("autoNews").classList.remove("hidden");
+        if (window.Notification && Notification.permission === "granted" && document.hidden) {
+          try { new Notification("Cartellino", { body: news.map((n) => n.replace(/<[^>]+>/g, "")).slice(0, 3).join("\n") }); } catch { /* niente */ }
+        }
+      }
+    }
+    renderAuto();
+  }
+  function autoStart() {
+    renderAuto();
+    if (AUTO.timer) clearInterval(AUTO.timer);
+    AUTO.timer = setInterval(() => { void autoPoll(); }, 60000);
+    void autoPoll();
+  }
+  window.__cartellinoAuto = { poll: () => autoPoll(), info: () => ({ ...AUTO, on: !!(state.company && state.company.cassetta) }) }; // test automatici
+
   // ---------------------------------------------------------- PRIMI PASSI (onboarding): si spuntano da soli
   function startItems() {
     const c = state.company || {};
@@ -5262,12 +5421,12 @@ Digital Valut non ne ha una copia.</p>
     clearTimeout(FOLDER.timer);
     FOLDER.timer = setTimeout(() => writeVault().catch((e) => { FOLDER.error = "Non riesco a salvare nella cartella: " + (e && e.message ? e.message : "errore"); renderFolder(); }), 500);
   }
-  async function saveReportToFolder(name, text) {
+  async function saveReportToFolder(name, text, replace) {
     if (!FOLDER || !FOLDER.ok || !FOLDER.handle) return;
     try {
       const dir = await FOLDER.handle.getDirectoryHandle(REP_DIR, { create: true });
       const safe = String(name || "report.cartellino.json").replace(/[\\/:*?"<>|]+/g, "-");
-      if (!(await fsRead(dir, safe))) await fsWrite(dir, safe, text);
+      if (replace || !(await fsRead(dir, safe))) await fsWrite(dir, safe, text);
     } catch { /* il report resta comunque nell'archivio del browser */ }
   }
   async function importFolderReports() {
